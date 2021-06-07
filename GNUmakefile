@@ -1,4 +1,4 @@
-PLUGIN_BINARY=hello-driver
+PLUGIN_BINARY=rookout-java-driver
 export GO111MODULE=on
 
 default: build
