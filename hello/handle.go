@@ -6,30 +6,26 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hashicorp/go-hclog"
-	"github.com/hashicorp/go-plugin"
+	hclog "github.com/hashicorp/go-hclog"
+	plugin "github.com/hashicorp/go-plugin"
 	"github.com/hashicorp/nomad/drivers/shared/executor"
 	"github.com/hashicorp/nomad/plugins/drivers"
 )
 
-// taskHandle should store all relevant runtime information
-// such as process ID if this is a local task or other meta
-// data if this driver deals with external APIs
 type taskHandle struct {
+	exec         executor.Executor
+	pid          int
+	pluginClient *plugin.Client
+	logger       hclog.Logger
+
 	// stateLock syncs access to all fields below
 	stateLock sync.RWMutex
 
-	logger       hclog.Logger
-	exec         executor.Executor
-	pluginClient *plugin.Client
-	taskConfig   *drivers.TaskConfig
-	procState    drivers.TaskState
-	startedAt    time.Time
-	completedAt  time.Time
-	exitResult   *drivers.ExitResult
-
-	// TODO: add any extra relevant information about the task.
-	pid int
+	taskConfig  *drivers.TaskConfig
+	procState   drivers.TaskState
+	startedAt   time.Time
+	completedAt time.Time
+	exitResult  *drivers.ExitResult
 }
 
 func (h *taskHandle) TaskStatus() *drivers.TaskStatus {
@@ -62,8 +58,8 @@ func (h *taskHandle) run() {
 	}
 	h.stateLock.Unlock()
 
-	// TODO: wait for your task to complete and upate its state.
 	ps, err := h.exec.Wait(context.Background())
+
 	h.stateLock.Lock()
 	defer h.stateLock.Unlock()
 
@@ -77,4 +73,6 @@ func (h *taskHandle) run() {
 	h.exitResult.ExitCode = ps.ExitCode
 	h.exitResult.Signal = ps.Signal
 	h.completedAt = ps.Time
+
+	// TODO: detect if the taskConfig OOMed
 }
