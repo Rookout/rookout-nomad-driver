@@ -1,4 +1,4 @@
-PLUGIN_BINARY=rookout-java-driver
+PLUGIN_BINARY=java-rookout
 export GO111MODULE=on
 
 default: build
@@ -9,3 +9,5 @@ clean: ## Remove build artifacts
 
 build:
 	go build -o ${PLUGIN_BINARY} .
+
+rebuild: clean build

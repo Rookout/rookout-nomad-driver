@@ -1,5 +1,5 @@
 // TODO: update the module path below to match your own repository
-module github.com/hashicorp/nomad-skeleton-driver-plugin
+module github.com/Rookout/Nomad-Driver
 
 go 1.12
 
@@ -21,13 +21,15 @@ require (
 	github.com/gorhill/cronexpr v0.0.0-20180427100037-88b0669f7d75 // indirect
 	github.com/hashicorp/consul-template v0.25.1
 	github.com/hashicorp/go-envparse v0.0.0-20190703193109-150b3a2a4611 // indirect
-	github.com/hashicorp/go-hclog v0.14.1
-	github.com/hashicorp/go-plugin v1.4.0
+	github.com/hashicorp/go-hclog v0.12.0
+	github.com/hashicorp/go-plugin v1.0.2-0.20191004171845-809113480b55
 	github.com/hashicorp/hcl2 v0.0.0-20191002203319-fb75b3253c80 // indirect
-	github.com/hashicorp/nomad v1.1.0
+	github.com/hashicorp/nomad v1.0.4
+	github.com/hashicorp/vault/api v1.0.5-0.20190730042357-746c0b111519 // indirect
 	github.com/mitchellh/go-ps v0.0.0-20190716172923-621e5597135b // indirect
 	github.com/moby/moby v1.13.1 // indirect
-	github.com/shirou/gopsutil v2.19.11+incompatible // indirect
+	github.com/opencontainers/runc v1.0.0-rc92 // indirect
+	github.com/syndtr/gocapability v0.0.0-20180916011248-d98352740cb2 // indirect
 	github.com/ugorji/go v1.1.7 // indirect
 	github.com/vbatts/tar-split v0.11.1 // indirect
 	go4.org v0.0.0-20191010144846-132d2879e1e9 // indirect

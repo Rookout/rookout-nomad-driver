@@ -1,7 +1,7 @@
 log_level = "TRACE"
 
-plugin "hello-driver" {
+plugin "java-rookout" {
   config {
-    shell = "bash"
+//    shell = "bash"
   }
 }
