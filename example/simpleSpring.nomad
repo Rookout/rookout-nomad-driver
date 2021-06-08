@@ -5,7 +5,7 @@ job "java-simple-spring-same" {
 
     group "deployment" {
         task "java-run" {
-            driver = "java-same"
+            driver = "java-rookout"
 
             artifact {
                 source = "https://github.com/rookout/nomad-driver/raw/main/example/SimpleLoop.jar"

@@ -27,7 +27,7 @@ import (
 
 const (
 	// pluginName is the name of the plugin
-	pluginName = "java-same"
+	pluginName = "java-rookout"
 
 	// fingerprintPeriod is the interval at which the driver will send fingerprint responses
 	fingerprintPeriod = 30 * time.Second
