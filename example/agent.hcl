@@ -1,6 +1,6 @@
 log_level = "TRACE"
 
-plugin "java-rookout" {
+plugin "java-same" {
   config {
 //    shell = "bash"
   }

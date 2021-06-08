@@ -1,11 +1,11 @@
-job "java-simple-spring" {
-  name = "java-simple-spring"
+job "java-simple-spring-same" {
+  name = "java-simple-spring-same"
   datacenters = ["dc1"]
   type = "service"
 
     group "deployment" {
         task "java-run" {
-            driver = "java"
+            driver = "java-same"
 
             artifact {
                 source = "https://github.com/rookout/nomad-driver/raw/main/example/SimpleLoop.jar"
