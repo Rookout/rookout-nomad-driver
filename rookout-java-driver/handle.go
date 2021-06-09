@@ -1,4 +1,4 @@
-package rookout_java_driver
+package java
 
 import (
 	"context"

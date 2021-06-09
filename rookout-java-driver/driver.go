@@ -1,4 +1,4 @@
-package rookout_java_driver
+package java
 
 import (
 	"context"
@@ -11,9 +11,11 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/hashicorp/nomad/client/lib/cgutil"
+	"github.com/hashicorp/nomad/drivers/shared/capabilities"
+
 	"github.com/hashicorp/consul-template/signals"
 	hclog "github.com/hashicorp/go-hclog"
-	"github.com/hashicorp/nomad/client/fingerprint"
 	"github.com/hashicorp/nomad/drivers/shared/eventer"
 	"github.com/hashicorp/nomad/drivers/shared/executor"
 	"github.com/hashicorp/nomad/drivers/shared/resolvconf"
@@ -74,6 +76,10 @@ var (
 			hclspec.NewAttr("default_ipc_mode", "string", false),
 			hclspec.NewLiteral(`"private"`),
 		),
+		"allow_caps": hclspec.NewDefault(
+			hclspec.NewAttr("allow_caps", "list(string)", false),
+			hclspec.NewLiteral(capabilities.HCLSpecLiteral),
+		),
 	})
 
 	// taskConfigSpec is the hcl specification for the driver config section of
@@ -89,12 +95,14 @@ var (
 		"args":          hclspec.NewAttr("args", "list(string)", false),
 		"pid_mode":      hclspec.NewAttr("pid_mode", "string", false),
 		"ipc_mode":      hclspec.NewAttr("ipc_mode", "string", false),
+		"cap_add":       hclspec.NewAttr("cap_add", "list(string)", false),
+		"cap_drop":      hclspec.NewAttr("cap_drop", "list(string)", false),
 		"rookout_token": hclspec.NewAttr("rookout_token", "string", false),
 	})
 
-	// capabilities is returned by the Capabilities RPC and indicates what
+	// driverCapabilities is returned by the Capabilities RPC and indicates what
 	// optional features this driver supports
-	capabilities = &drivers.Capabilities{
+	driverCapabilities = &drivers.Capabilities{
 		SendSignals: false,
 		Exec:        false,
 		FSIsolation: drivers.FSIsolationNone,
@@ -110,8 +118,8 @@ var (
 
 func init() {
 	if runtime.GOOS == "linux" {
-		capabilities.FSIsolation = drivers.FSIsolationChroot
-		capabilities.MountConfigs = drivers.MountConfigSupportAll
+		driverCapabilities.FSIsolation = drivers.FSIsolationChroot
+		driverCapabilities.MountConfigs = drivers.MountConfigSupportAll
 	}
 }
 
@@ -124,6 +132,10 @@ type Config struct {
 	// DefaultModeIPC is the default IPC isolation set for all tasks using
 	// exec-based task drivers.
 	DefaultModeIPC string `codec:"default_ipc_mode"`
+
+	// AllowCaps configures which Linux Capabilities are enabled for tasks
+	// running on this node.
+	AllowCaps []string `codec:"allow_caps"`
 }
 
 func (c *Config) validate() error {
@@ -139,19 +151,46 @@ func (c *Config) validate() error {
 		return fmt.Errorf("default_ipc_mode must be %q or %q, got %q", executor.IsolationModePrivate, executor.IsolationModeHost, c.DefaultModeIPC)
 	}
 
+	badCaps := capabilities.Supported().Difference(capabilities.New(c.AllowCaps))
+	if !badCaps.Empty() {
+		return fmt.Errorf("allow_caps configured with capabilities not supported by system: %s", badCaps)
+	}
+
 	return nil
 }
 
 // TaskConfig is the driver configuration of a taskConfig within a job
 type TaskConfig struct {
-	Class     string   `codec:"class"`
-	ClassPath string   `codec:"class_path"`
-	JarPath   string   `codec:"jar_path"`
-	JvmOpts   []string `codec:"jvm_options"`
-	Args      []string `codec:"args"` // extra arguments to java executable
-	ModePID   string   `codec:"pid_mode"`
-	ModeIPC   string   `codec:"ipc_mode"`
+	// Class indicates which class contains the java entry point.
+	Class string `codec:"class"`
 
+	// ClassPath indicates where class files are found.
+	ClassPath string `codec:"class_path"`
+
+	// JarPath indicates where a jar  file is found.
+	JarPath string `codec:"jar_path"`
+
+	// JvmOpts are arguments to pass to the JVM
+	JvmOpts []string `codec:"jvm_options"`
+
+	// Args are extra arguments to java executable
+	Args []string `codec:"args"`
+
+	// ModePID indicates whether PID namespace isolation is enabled for the task.
+	// Must be "private" or "host" if set.
+	ModePID string `codec:"pid_mode"`
+
+	// ModeIPC indicates whether IPC namespace isolation is enabled for the task.
+	// Must be "private" or "host" if set.
+	ModeIPC string `codec:"ipc_mode"`
+
+	// CapAdd is a set of linux capabilities to enable.
+	CapAdd []string `codec:"cap_add"`
+
+	// CapDrop is a set of linux capabilities to disable.
+	CapDrop []string `codec:"cap_drop"`
+
+	// is the rookout token
 	RookoutToken string `codec:"rookout_token"`
 }
 
@@ -167,6 +206,16 @@ func (tc *TaskConfig) validate() error {
 	case "", executor.IsolationModePrivate, executor.IsolationModeHost:
 	default:
 		return fmt.Errorf("ipc_mode must be %q or %q, got %q", executor.IsolationModePrivate, executor.IsolationModeHost, tc.ModeIPC)
+	}
+
+	supported := capabilities.Supported()
+	badAdds := supported.Difference(capabilities.New(tc.CapAdd))
+	if !badAdds.Empty() {
+		return fmt.Errorf("cap_add configured with capabilities not supported by system: %s", badAdds)
+	}
+	badDrops := supported.Difference(capabilities.New(tc.CapDrop))
+	if !badDrops.Empty() {
+		return fmt.Errorf("cap_drop configured with capabilities not supported by system: %s", badDrops)
 	}
 
 	return nil
@@ -215,19 +264,6 @@ func NewDriver(ctx context.Context, logger hclog.Logger) drivers.DriverPlugin {
 	}
 }
 
-// NewPlugin returns a new example driver plugin
-func NewPlugin(logger hclog.Logger) drivers.DriverPlugin {
-	ctx, _ := context.WithCancel(context.Background())
-	logger = logger.Named(pluginName)
-
-	return &Driver{
-		eventer: eventer.NewEventer(ctx, logger),
-		tasks:   newTaskStore(),
-		ctx:     ctx,
-		logger:  logger,
-	}
-}
-
 func (d *Driver) PluginInfo() (*base.PluginInfoResponse, error) {
 	return pluginInfo, nil
 }
@@ -260,7 +296,7 @@ func (d *Driver) TaskConfigSchema() (*hclspec.Spec, error) {
 }
 
 func (d *Driver) Capabilities() (*drivers.Capabilities, error) {
-	return capabilities, nil
+	return driverCapabilities, nil
 }
 
 func (d *Driver) Fingerprint(ctx context.Context) (<-chan *drivers.Fingerprint, error) {
@@ -299,7 +335,7 @@ func (d *Driver) buildFingerprint() *drivers.Fingerprint {
 			return fp
 		}
 
-		mount, err := fingerprint.FindCgroupMountpointDir()
+		mount, err := cgutil.FindCgroupMountpointDir()
 		if err != nil {
 			fp.Health = drivers.HealthStateUnhealthy
 			fp.HealthDescription = drivers.NoCgroupMountMessage
@@ -421,13 +457,13 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		return nil, nil, fmt.Errorf("failed to find java binary: %s", err)
 	}
 
+	d.logger.Info(fmt.Sprintf("got Rookout token: %v", driverConfig.RookoutToken))
+
 	rookoutJarPath, err := d.downloadRookoutJarIfNeeded(cfg)
 
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to download rookout jar: %s", err)
-	}
+	d.logger.Info(fmt.Sprintf("Using rookout jar path: %v", rookoutJarPath))
 
-	args := d.javaCmdArgs(driverConfig, rookoutJarPath)
+	args := javaCmdArgs(driverConfig, rookoutJarPath)
 
 	d.logger.Info("starting java task", "driver_cfg", hclog.Fmt("%+v", driverConfig), "args", args)
 
@@ -438,7 +474,7 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 	executorConfig := &executor.ExecutorConfig{
 		LogFile:     pluginLogFile,
 		LogLevel:    "debug",
-		FSIsolation: capabilities.FSIsolation == drivers.FSIsolationChroot,
+		FSIsolation: driverCapabilities.FSIsolation == drivers.FSIsolationChroot,
 	}
 
 	exec, pluginClient, err := executor.CreateExecutor(
@@ -461,6 +497,14 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		cfg.Mounts = append(cfg.Mounts, dnsMount)
 	}
 
+	caps, err := capabilities.Calculate(
+		capabilities.NomadDefaults(), d.config.AllowCaps, driverConfig.CapAdd, driverConfig.CapDrop,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	d.logger.Debug("task capabilities", "capabilities", caps)
+
 	execCmd := &executor.ExecCommand{
 		Cmd:              absPath,
 		Args:             args,
@@ -476,6 +520,7 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		NetworkIsolation: cfg.NetworkIsolation,
 		ModePID:          executor.IsolationMode(d.config.DefaultModePID, driverConfig.ModePID),
 		ModeIPC:          executor.IsolationMode(d.config.DefaultModeIPC, driverConfig.ModeIPC),
+		Capabilities:     caps,
 	}
 
 	ps, err := exec.Launch(execCmd)
@@ -515,14 +560,14 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 
 func (d *Driver) downloadRookoutJarIfNeeded(cfg *drivers.TaskConfig) (string, error) {
 
-	rookoutJarLocalPath := "/local/rook-0.1.160.jar"
-	jarPath := cfg.TaskDir().Dir + rookoutJarLocalPath
+	rookoutJarLocalPath := "local/rook-0.1.160.jar"
+	jarPath := cfg.TaskDir().Dir + "/" + rookoutJarLocalPath
 
-	d.logger.Info("checking for rookout jar at", "jar-path", jarPath)
+	d.logger.Info(fmt.Sprintf("checking for rookout jar at %v", jarPath))
 
 	if _, err := os.Stat(jarPath); err == nil {
 		// path/to/whatever exists
-		d.logger.Info("jar already downloaded at", "jar-path", jarPath)
+		d.logger.Info(fmt.Sprintf("jar already downloaded at %v", jarPath))
 
 		return rookoutJarLocalPath, nil
 
@@ -530,7 +575,7 @@ func (d *Driver) downloadRookoutJarIfNeeded(cfg *drivers.TaskConfig) (string, er
 		// path/to/whatever does *not* exist
 		d.logger.Info("jar not found, downloading...")
 
-		specUrl := "https://repository.sonatype.org/service/local/repositories/central-proxy/content/com/rookout/rook/0.1.160/rook-0.1.160.jar"
+		specUrl := "https://repository.sonatype.org/service/local/repositories/central-proxy/content/com/rookout/rook/0.1.176/rook-0.1.176.jar"
 		resp, err := http.Get(specUrl)
 
 		if err != nil {
@@ -543,12 +588,6 @@ func (d *Driver) downloadRookoutJarIfNeeded(cfg *drivers.TaskConfig) (string, er
 		if resp.StatusCode != 200 {
 			return "", fmt.Errorf("failed to download rookout jar, error: %s", resp.Body)
 		}
-
-		//err = os.MkdirAll("/local", 0755)
-
-		//if err != nil {
-		//	d.logger.Error("err creating dir", err)
-		//}
 
 		// Create the file
 		out, err := os.Create(jarPath)
@@ -577,11 +616,8 @@ func (d *Driver) downloadRookoutJarIfNeeded(cfg *drivers.TaskConfig) (string, er
 	}
 }
 
-func (d *Driver) javaCmdArgs(driverConfig TaskConfig, rookoutJarPath string) []string {
-
-	d.logger.Info("using rookout jar from", "jar-path", rookoutJarPath)
-
-	args := []string{}
+func javaCmdArgs(driverConfig TaskConfig, rookoutJarPath string) []string {
+	var args []string
 
 	args = append(args, "-javaagent:"+rookoutJarPath, "-DROOKOUT_TOKEN="+driverConfig.RookoutToken)
 
@@ -599,6 +635,10 @@ func (d *Driver) javaCmdArgs(driverConfig TaskConfig, rookoutJarPath string) []s
 	if driverConfig.JarPath != "" {
 		args = append(args, "-jar", driverConfig.JarPath)
 	}
+
+	//args = append(args, "-javaagent", rookoutJarPath)
+	//args = append(args, "-DROOKOUT_TOKEN", driverConfig.RookoutToken)
+	//args = append(args, "-DROOKOUT_DEBUG", "True")
 
 	// Add the class
 	if driverConfig.Class != "" {
