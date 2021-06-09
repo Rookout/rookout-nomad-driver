@@ -619,7 +619,9 @@ func (d *Driver) downloadRookoutJarIfNeeded(cfg *drivers.TaskConfig) (string, er
 func javaCmdArgs(driverConfig TaskConfig, rookoutJarPath string) []string {
 	var args []string
 
-	args = append(args, "-javaagent:"+rookoutJarPath, "-DROOKOUT_TOKEN="+driverConfig.RookoutToken)
+	if driverConfig.RookoutToken != "" {
+		args = append(args, "-javaagent:"+rookoutJarPath, "-DROOKOUT_TOKEN="+driverConfig.RookoutToken)
+	}
 
 	// Look for jvm options
 	if len(driverConfig.JvmOpts) != 0 {
