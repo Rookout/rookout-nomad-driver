@@ -3,6 +3,8 @@ package java
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -86,15 +88,16 @@ var (
 		// It's required for either `class` or `jar_path` to be set,
 		// but that's not expressable in hclspec.  Marking both as optional
 		// and setting checking explicitly later
-		"class":       hclspec.NewAttr("class", "string", false),
-		"class_path":  hclspec.NewAttr("class_path", "string", false),
-		"jar_path":    hclspec.NewAttr("jar_path", "string", false),
-		"jvm_options": hclspec.NewAttr("jvm_options", "list(string)", false),
-		"args":        hclspec.NewAttr("args", "list(string)", false),
-		"pid_mode":    hclspec.NewAttr("pid_mode", "string", false),
-		"ipc_mode":    hclspec.NewAttr("ipc_mode", "string", false),
-		"cap_add":     hclspec.NewAttr("cap_add", "list(string)", false),
-		"cap_drop":    hclspec.NewAttr("cap_drop", "list(string)", false),
+		"class":         hclspec.NewAttr("class", "string", false),
+		"class_path":    hclspec.NewAttr("class_path", "string", false),
+		"jar_path":      hclspec.NewAttr("jar_path", "string", false),
+		"jvm_options":   hclspec.NewAttr("jvm_options", "list(string)", false),
+		"args":          hclspec.NewAttr("args", "list(string)", false),
+		"pid_mode":      hclspec.NewAttr("pid_mode", "string", false),
+		"ipc_mode":      hclspec.NewAttr("ipc_mode", "string", false),
+		"cap_add":       hclspec.NewAttr("cap_add", "list(string)", false),
+		"cap_drop":      hclspec.NewAttr("cap_drop", "list(string)", false),
+		"rookout_token": hclspec.NewAttr("rookout_token", "string", false),
 	})
 
 	// driverCapabilities is returned by the Capabilities RPC and indicates what
@@ -186,6 +189,9 @@ type TaskConfig struct {
 
 	// CapDrop is a set of linux capabilities to disable.
 	CapDrop []string `codec:"cap_drop"`
+
+	// is the rookout token
+	RookoutToken string `codec:"rookout_token"`
 }
 
 func (tc *TaskConfig) validate() error {
@@ -451,7 +457,13 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		return nil, nil, fmt.Errorf("failed to find java binary: %s", err)
 	}
 
-	args := javaCmdArgs(driverConfig)
+	d.logger.Info(fmt.Sprintf("got Rookout token: %v", driverConfig.RookoutToken))
+
+	rookoutJarPath, err := d.downloadRookoutJarIfNeeded(cfg)
+
+	d.logger.Info(fmt.Sprintf("Using rookout jar path: %v", rookoutJarPath))
+
+	args := javaCmdArgs(driverConfig, rookoutJarPath)
 
 	d.logger.Info("starting java task", "driver_cfg", hclog.Fmt("%+v", driverConfig), "args", args)
 
@@ -546,8 +558,68 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 	return handle, nil, nil
 }
 
-func javaCmdArgs(driverConfig TaskConfig) []string {
+func (d *Driver) downloadRookoutJarIfNeeded(cfg *drivers.TaskConfig) (string, error) {
+
+	rookoutJarLocalPath := "local/rook-0.1.160.jar"
+	jarPath := cfg.TaskDir().Dir + "/" + rookoutJarLocalPath
+
+	d.logger.Info(fmt.Sprintf("checking for rookout jar at %v", jarPath))
+
+	if _, err := os.Stat(jarPath); err == nil {
+		// path/to/whatever exists
+		d.logger.Info(fmt.Sprintf("jar already downloaded at %v", jarPath))
+
+		return rookoutJarLocalPath, nil
+
+	} else if os.IsNotExist(err) {
+		// path/to/whatever does *not* exist
+		d.logger.Info("jar not found, downloading...")
+
+		specUrl := "https://repository.sonatype.org/service/local/repositories/central-proxy/content/com/rookout/rook/0.1.176/rook-0.1.176.jar"
+		resp, err := http.Get(specUrl)
+
+		if err != nil {
+			d.logger.Error("err", err)
+		}
+
+		defer resp.Body.Close()
+		d.logger.Info("status", resp.Status)
+
+		if resp.StatusCode != 200 {
+			return "", fmt.Errorf("failed to download rookout jar, error: %s", resp.Body)
+		}
+
+		// Create the file
+		out, err := os.Create(jarPath)
+
+		if err != nil {
+			d.logger.Error("err creating file", err)
+		}
+		d.logger.Info("file", "file", out)
+
+		defer out.Close()
+
+		// Write the body to file
+		_, err = io.Copy(out, resp.Body)
+
+		if err != nil {
+			d.logger.Error("err", err)
+		}
+
+		return rookoutJarLocalPath, nil
+
+	} else {
+		// Schrodinger: file may or may not exist. See err for details.
+
+		// Therefore, do *NOT* use !os.IsNotExist(err) to test for file existence
+		return "", fmt.Errorf("unable to determine whether rookout jar exists on path %s", jarPath)
+	}
+}
+
+func javaCmdArgs(driverConfig TaskConfig, rookoutJarPath string) []string {
 	var args []string
+
+	args = append(args, "-javaagent:"+rookoutJarPath, "-DROOKOUT_TOKEN="+driverConfig.RookoutToken)
 
 	// Look for jvm options
 	if len(driverConfig.JvmOpts) != 0 {
@@ -563,6 +635,10 @@ func javaCmdArgs(driverConfig TaskConfig) []string {
 	if driverConfig.JarPath != "" {
 		args = append(args, "-jar", driverConfig.JarPath)
 	}
+
+	//args = append(args, "-javaagent", rookoutJarPath)
+	//args = append(args, "-DROOKOUT_TOKEN", driverConfig.RookoutToken)
+	//args = append(args, "-DROOKOUT_DEBUG", "True")
 
 	// Add the class
 	if driverConfig.Class != "" {
