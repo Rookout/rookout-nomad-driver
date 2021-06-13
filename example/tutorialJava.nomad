@@ -1,3 +1,8 @@
+variable "rookout_token" {
+  type        = string
+  description = "Rookout account token"
+}
+
 job "java-tutorial" {
   name = "java-tutorial"
   datacenters = ["dc1"]
@@ -17,11 +22,12 @@ job "java-tutorial" {
       config {
         jar_path    = "local/javaTutorial.jar"
         jvm_options = ["-Xmx2048m", "-Xms256m"]
-        rookout_token = "2d1c78743eb256e80a4b4b53314c806253e88a17ae65044ce9818e3d294be2f0"
+        rookout_token = var.rookout_token
       }
 
       env {
         ROOKOUT_REMOTE_ORIGIN="https://github.com/Rookout/tutorial-java"
+        ROOKOUT_DEBUG = "True"
       }
     }
   }
