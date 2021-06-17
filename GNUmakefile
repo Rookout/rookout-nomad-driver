@@ -1,4 +1,4 @@
-PLUGIN_BINARY=java-rookout
+PLUGIN_BINARY=plugins/java-rookout
 export GO111MODULE=on
 
 default: build
