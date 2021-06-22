@@ -27,7 +27,6 @@ job "java-tutorial" {
 
       env {
         ROOKOUT_REMOTE_ORIGIN="https://github.com/Rookout/tutorial-java"
-        ROOKOUT_DEBUG = "True"
       }
     }
   }
