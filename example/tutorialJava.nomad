@@ -13,7 +13,7 @@ job "java-tutorial" {
       driver = "java-rookout"
 
       artifact {
-        source = "https://github.com/rookout/nomad-driver/raw/main/example/tutorialJava.jar"
+        source = "https://github.com/rookout/rookout-nomad-driver/raw/main/example/tutorialJava.jar"
         destination = "local/javaTutorial.jar"
         mode = "file"
         options {}

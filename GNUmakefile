@@ -1,5 +1,6 @@
 PLUGIN_BINARY=bin/java-rookout
 export GOARCH=amd64
+export GOOS=linux
 export GO111MODULE=on
 
 default: build
