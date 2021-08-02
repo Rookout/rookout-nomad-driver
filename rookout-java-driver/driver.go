@@ -575,7 +575,7 @@ func (d *Driver) downloadRookoutJarIfNeeded(cfg *drivers.TaskConfig) (string, er
 		// path/to/whatever does *not* exist
 		d.logger.Info("jar not found, downloading...")
 
-		specUrl := "https://repository.sonatype.org/service/local/repositories/central-proxy/content/com/rookout/rook/0.1.176/rook-0.1.176.jar"
+		specUrl := "https://repository.sonatype.org/service/local/repositories/central-proxy/content/com/rookout/rook/0.1.192/rook-0.1.192.jar"
 		resp, err := http.Get(specUrl)
 
 		if err != nil {
